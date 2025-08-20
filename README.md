@@ -147,3 +147,8 @@ Confira no arquivo pdf como gerar um webhook de retorno automático de pagamento
 
 Personalizações:</br>
 As instruções para alteração de cores, logo, icones e nome da instalação estão nos arquivos de instruções.
+
+Documentação em Desenvolvimento:
+```
+https://launcher-and-co.gitbook.io/whaticketsaas/
+```
