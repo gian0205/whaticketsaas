@@ -65,7 +65,7 @@ const SendWhatsAppMessage = async ({
 };
 
 
-  const sentMessage = sendScheduledMessagesWbot.add("SendMessageWbot", { messageData }, { delay: 500 });
+  const sentMessage = sendScheduledMessagesWbot.add("SendMessageWbot", { messageData }, { delay: 0 });
   logger.info("Mensagem enviada via REDIS...");
 
   try {
