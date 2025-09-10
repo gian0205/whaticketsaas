@@ -140,7 +140,7 @@ Siga os arquivos de Instruções para instalação, você precisa ter acesso lib
 https://loja.infinitepay.io/launcher-tecnologia/aep0253-script-crm-whaticket-gold-com-saas-e-kanba
 
 ```
-Google Drive> Compartilhados Comigo > Infoprodutos > Whaticket SaaS > Instruções = SEMPRE COMECE POR AQUI
+Google Drive> Compartilhados Comigo > Compartilhados > Whaticket SaaS > Instruções
 ```
 
 Confira no arquivo pdf como gerar um webhook de retorno automático de pagamento da Efi.
