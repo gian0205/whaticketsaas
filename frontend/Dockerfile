@@ -19,7 +19,8 @@ WORKDIR /src/repo/frontend
 ENV NPM_CONFIG_LEGACY_PEER_DEPS=true
 RUN rm -f package-lock.json yarn.lock pnpm-lock.yaml \
  && npm install --legacy-peer-deps \
- && npm install --legacy-peer-deps material-ui-popup-state@^5
+ && npm install --legacy-peer-deps material-ui-popup-state@^5 \
+ && npm install --legacy-peer-deps @emotion/react@^11 @emotion/styled@^11
 
 # (opcional, se CRA reclamar de warnings)
 ENV CI=false
