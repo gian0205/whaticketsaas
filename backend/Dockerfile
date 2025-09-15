@@ -12,7 +12,15 @@ RUN git clone --depth=1 --branch ${GIT_REF} ${GIT_REPO} repo
 WORKDIR /src/repo/backend
 
 # Instala deps e builda (se não houver etapa de build, seguimos mesmo assim)
-RUN npm ci
+RUN if [ -f package-lock.json ]; then \
+      npm ci; \
+    elif [ -f pnpm-lock.yaml ]; then \
+      npm i -g corepack && corepack enable && pnpm i --frozen-lockfile=false; \
+    elif [ -f yarn.lock ]; then \
+      npm i -g yarn && (yarn install --frozen-lockfile || yarn install); \
+    else \
+      npm install --legacy-peer-deps; \
+    fi
 RUN npm run build || echo "Sem etapa de build (ok)."
 RUN npm prune --omit=dev
 
