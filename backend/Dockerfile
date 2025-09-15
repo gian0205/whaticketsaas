@@ -45,9 +45,17 @@ EXPOSE 4000
 
 # Migrações (se houver) + start com fallbacks comuns
 CMD sh -c '\
-  echo "Iniciando Whaticket backend na porta ${PORT}..." && \
-  if npm run | grep -q "migrate"; then npm run migrate || true; fi && \
+  echo "Iniciando Whaticket backend na porta ${PORT:-4000}..." && \
+  npm i -g sequelize-cli >/dev/null 2>&1 || true && \
+  if [ -n "$DB_USER" ] && [ -n "$DB_PASS" ] && [ -n "$DB_NAME" ]; then \
+    echo "Executando migrations..."; \
+    sequelize db:migrate --url "mysql://${DB_USER}:${DB_PASS}@${DB_HOST:-db}:${DB_PORT:-3306}/${DB_NAME}" || true; \
+    if [ "$RUN_SEEDS" = "true" ]; then \
+      echo "Executando seeds..."; \
+      sequelize db:seed:all --url "mysql://${DB_USER}:${DB_PASS}@${DB_HOST:-db}:${DB_PORT:-3306}/${DB_NAME}" || true; \
+    fi; \
+  fi && \
   node dist/server.js 2>/dev/null || \
   node dist/app.js 2>/dev/null || \
   npm start || \
-  node src/server.js'
+  node dist/index.js'
