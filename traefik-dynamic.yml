@@ -1,0 +1,23 @@
+http:
+  routers:
+    r-api:
+      rule: "PathPrefix(`/api`)"
+      service: s-api
+      entryPoints: [web]
+
+    r-front:
+      # tudo que não for /api vai pro front
+      rule: "PathPrefix(`/`)"
+      service: s-front
+      entryPoints: [web]
+
+  services:
+    s-api:
+      loadBalancer:
+        servers:
+          - url: "http://api:4000"
+
+    s-front:
+      loadBalancer:
+        servers:
+          - url: "http://web:80"
