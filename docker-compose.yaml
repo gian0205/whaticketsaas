@@ -8,10 +8,8 @@ services:
       POSTGRES_USER: ${DB_USER:-whaticket}
       POSTGRES_PASSWORD: ${DB_PASS:-mude}
       TZ: ${TZ:-America/Sao_Paulo}
-    volumes:
-      - pg_data:/var/lib/postgresql/data
+    volumes: [ "pg_data:/var/lib/postgresql/data" ]
     healthcheck:
-      # usa defaults se envs faltarem (evita "role '-d' does not exist")
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-postgres}"]
       interval: 10s
       timeout: 5s
@@ -23,8 +21,7 @@ services:
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
     environment:
       TZ: ${TZ:-America/Sao_Paulo}
-    volumes:
-      - redis_data:/data
+    volumes: [ "redis_data:/data" ]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -43,94 +40,124 @@ services:
       TZ: ${TZ:-America/Sao_Paulo}
       NODE_ENV: production
       PORT: "4000"
-
-      # Domínio único (o WEB faz proxy /api)
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-whaticket.nepal.decorafit.com.br}
       BACKEND_URL: https://${PUBLIC_DOMAIN:-whaticket.nepal.decorafit.com.br}/api
       FRONTEND_URL: https://${PUBLIC_DOMAIN:-whaticket.nepal.decorafit.com.br}
-
-      # Banco (PostgreSQL)
       DB_DIALECT: postgres
       DB_HOST: db
       DB_PORT: "5432"
       DB_USER: ${DB_USER:-whaticket}
       DB_PASS: ${DB_PASS:-mude}
       DB_NAME: ${DB_NAME:-whaticket}
-
-      # Redis
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-
-      # JWT (troque por segredos fortes)
       JWT_SECRET: ${JWT_SECRET:-troque}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-troque2}
-
-      # Seeds automáticas no 1º boot (depois altere para "false")
       RUN_SEEDS: ${RUN_SEEDS:-false}
     depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
     volumes:
-      # ajuste o caminho se seu backend servir mídias em outro diretório
       - storage:/app/public
+    healthcheck:
+      test: ["CMD-SHELL", "node -e 'require(\"net\").connect(process.env.PORT||4000,\"127.0.0.1\").on(\"connect\",()=>process.exit(0)).on(\"error\",()=>process.exit(1))'"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
     command: >
       sh -lc '
         set -e;
         echo "[boot] garantindo sequelize-cli...";
         command -v sequelize >/dev/null 2>&1 || npm i -g sequelize-cli >/dev/null 2>&1 || true;
-
-        # garante driver do Postgres (caso não esteja na imagem final)
-        cd /app;
-        node -e "require(\"pg\");require(\"pg-hstore\")" >/dev/null 2>&1 || (echo "[boot] instalando pg/pg-hstore..."; npm i --omit=dev pg pg-hstore);
-
-        # monta URL do banco
-        DB_URL="postgres://$$DB_USER:$$DB_PASS@$$DB_HOST:$$DB_PORT/$$DB_NAME";
-
-        # migrations (prefere dist/, fallback src/)
-        MP="/app/dist/database/migrations"; [ -d "$$MP" ] || MP="/app/src/database/migrations";
-        if [ -d "$$MP" ]; then
-          echo "[boot] rodando migrations em $$MP...";
-          sequelize db:migrate --url "$$DB_URL" --migrations-path "$$MP" || true;
-        else
-          echo "[boot] nenhuma pasta de migrations encontrada (ok).";
+        node -e "require(\"pg\");require(\"pg-hstore\")" >/dev/null 2>&1 || npm i --omit=dev pg pg-hstore || true;
+        cd /app 2>/dev/null || cd /usr/src/app 2>/dev/null || cd /opt/app 2>/dev/null || true;
+        APPDIR="$PWD"; DB_URL="postgres://$${DB_USER}:$${DB_PASS}@$${DB_HOST}:$${DB_PORT}/$${DB_NAME}";
+        for MP in "$APPDIR/database/migrations" "$APPDIR/dist/database/migrations" "$APPDIR/src/database/migrations"; do
+          [ -d "$MP" ] && echo "[boot] migrations em $MP..." && sequelize db:migrate --url "$DB_URL" --migrations-path "$MP" || true && break;
+        done
+        if [ "${RUN_SEEDS:-false}" = "true" ]; then
+          for SP in "$APPDIR/database/seeders" "$APPDIR/dist/database/seeders" "$APPDIR/src/database/seeders"; do
+            [ -d "$SP" ] && echo "[boot] seeds em $SP..." && sequelize db:seed:all --url "$DB_URL" --seeders-path "$SP" || true && break;
+          done
         fi
-
-        # seeds (opcional)
-        if [ "$$RUN_SEEDS" = "true" ]; then
-          SP="/app/dist/database/seeders"; [ -d "$$SP" ] || SP="/app/src/database/seeders";
-          if [ -d "$$SP" ]; then
-            echo "[boot] rodando seeds em $$SP...";
-            sequelize db:seed:all --url "$$DB_URL" --seeders-path "$$SP" || true;
-          else
-            echo "[boot] nenhuma pasta de seeders encontrada (ok).";
-          fi
-        fi
-
-        echo "[boot] iniciando servidor...";
-        node dist/server.js 2>/dev/null || node dist/app.js 2>/dev/null || npm start || node dist/index.js
+        export PORT="$${PORT:-4000}";
+        echo "[boot] iniciando servidor (PORT=$PORT)...";
+        node server.js 2>/dev/null || node app.js 2>/dev/null || node dist/server.js 2>/dev/null || node dist/app.js 2>/dev/null || node dist/index.js 2>/dev/null || npm start
       '
     restart: unless-stopped
+    # Fica só na rede default; quem recebe tráfego externo será o "edge".
+    networks: [ default ]
 
   web:
-    build:
-      context: https://github.com/gian0205/whaticketsaas.git#master
-      dockerfile: frontend/Dockerfile
-      args:
-        GIT_REPO: https://github.com/gian0205/whaticketsaas.git
-        GIT_REF: master
-        # garante que o front chame /api (mesmo domínio)
-        VITE_BACKEND_URL: /api
-        REACT_APP_BACKEND_URL: /api
+    image: node:18-alpine
+    working_dir: /opt/app
     environment:
+      VITE_BACKEND_URL: /api
+      REACT_APP_BACKEND_URL: /api
       TZ: ${TZ:-America/Sao_Paulo}
     depends_on:
-      api:
-        condition: service_started
+      api: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 80 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+    command: >
+      sh -lc '
+        set -e;
+        apk add --no-cache git nginx netcat-openbsd;
+        rm -rf src && git clone --depth=1 --branch master https://github.com/gian0205/whaticketsaas.git src;
+        cd src/frontend;
+        rm -f package-lock.json yarn.lock pnpm-lock.yaml || true;
+        npm install --legacy-peer-deps;
+        npm install --legacy-peer-deps material-ui-popup-state@^5 @emotion/react@^11 @emotion/styled@^11 || true;
+        npm run build;
+        BUILD_DIR=$([ -d dist ] && echo dist || echo build);
+        rm -rf /usr/share/nginx/html/*; cp -r "$BUILD_DIR"/* /usr/share/nginx/html/;
+        nginx -t; nginx -g "daemon off;";
+      '
     restart: unless-stopped
+    networks: [ default ]
+
+  # Traefik interno (edge) — recebe do Traefik do Coolify e distribui para web/api
+  edge:
+    image: traefik:2.11
+    depends_on:
+      - web
+      - api
+    command:
+      - --entrypoints.web.address=:80
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --providers.file.watch=true
+      - --log.level=INFO
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 80 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+    # monta o arquivo dinâmico com os backends (web/api)
+    configs:
+      - source: traefik_dynamic
+        target: /etc/traefik/dynamic.yml
+    restart: unless-stopped
+    # ESTE serviço entra na rede externa do Coolify
+    networks:
+      - default
+      - coolify-proxy
 
 volumes:
   pg_data:
   redis_data:
   storage:
+
+# nome da rede externa do Coolify pode variar (coolify-overlay, coolify-infra, etc.)
+# defina a env COOLIFY_NETWORK no Coolify para o nome correto; fallback = coolify-overlay
+networks:
+  coolify-proxy:
+    external: true
+    name: ${COOLIFY_NETWORK:-coolify-overlay}
+
+configs:
+  traefik_dynamic:
+    file: ./traefik-dynamic.yml
+
