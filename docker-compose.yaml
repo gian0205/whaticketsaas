@@ -8,7 +8,8 @@ services:
       POSTGRES_USER: ${DB_USER:-whaticket}
       POSTGRES_PASSWORD: ${DB_PASS:-mude}
       TZ: ${TZ:-America/Sao_Paulo}
-    volumes: [ "pg_data:/var/lib/postgresql/data" ]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-postgres}"]
       interval: 10s
@@ -21,7 +22,8 @@ services:
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
     environment:
       TZ: ${TZ:-America/Sao_Paulo}
-    volumes: [ "redis_data:/data" ]
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -40,53 +42,76 @@ services:
       TZ: ${TZ:-America/Sao_Paulo}
       NODE_ENV: production
       PORT: "4000"
+
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-whaticket.nepal.decorafit.com.br}
       BACKEND_URL: https://${PUBLIC_DOMAIN:-whaticket.nepal.decorafit.com.br}/api
       FRONTEND_URL: https://${PUBLIC_DOMAIN:-whaticket.nepal.decorafit.com.br}
+
       DB_DIALECT: postgres
       DB_HOST: db
       DB_PORT: "5432"
       DB_USER: ${DB_USER:-whaticket}
       DB_PASS: ${DB_PASS:-mude}
       DB_NAME: ${DB_NAME:-whaticket}
+
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+
       JWT_SECRET: ${JWT_SECRET:-troque}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-troque2}
+
       RUN_SEEDS: ${RUN_SEEDS:-false}
     depends_on:
-      db: { condition: service_healthy }
-      redis: { condition: service_healthy }
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - storage:/app/public
-    healthcheck:
-      test: ["CMD-SHELL", "node -e 'require(\"net\").connect(process.env.PORT||4000,\"127.0.0.1\").on(\"connect\",()=>process.exit(0)).on(\"error\",()=>process.exit(1))'"]
-      interval: 10s
-      timeout: 5s
-      retries: 60
     command: >
       sh -lc '
         set -e;
         echo "[boot] garantindo sequelize-cli...";
         command -v sequelize >/dev/null 2>&1 || npm i -g sequelize-cli >/dev/null 2>&1 || true;
         node -e "require(\"pg\");require(\"pg-hstore\")" >/dev/null 2>&1 || npm i --omit=dev pg pg-hstore || true;
-        cd /app 2>/dev/null || cd /usr/src/app 2>/dev/null || cd /opt/app 2>/dev/null || true;
-        APPDIR="$PWD"; DB_URL="postgres://$${DB_USER}:$${DB_PASS}@$${DB_HOST}:$${DB_PORT}/$${DB_NAME}";
+
+        cd /app 2>/dev/null || cd /usr/src/app 2>/dev/null || cd /opt/app 2>/dev/null || true
+        APPDIR="$PWD"
+        DB_URL="postgres://$DB_USER:$DB_PASS@$DB_HOST:$DB_PORT/$DB_NAME"
+
         for MP in "$APPDIR/database/migrations" "$APPDIR/dist/database/migrations" "$APPDIR/src/database/migrations"; do
-          [ -d "$MP" ] && echo "[boot] migrations em $MP..." && sequelize db:migrate --url "$DB_URL" --migrations-path "$MP" || true && break;
+          if [ -d "$MP" ]; then
+            echo "[boot] migrations em $MP..."
+            sequelize db:migrate --url "$DB_URL" --migrations-path "$MP" || true
+            break
+          fi
         done
+
         if [ "${RUN_SEEDS:-false}" = "true" ]; then
           for SP in "$APPDIR/database/seeders" "$APPDIR/dist/database/seeders" "$APPDIR/src/database/seeders"; do
-            [ -d "$SP" ] && echo "[boot] seeds em $SP..." && sequelize db:seed:all --url "$DB_URL" --seeders-path "$SP" || true && break;
+            if [ -d "$SP" ]; then
+              echo "[boot] seeds em $SP..."
+              sequelize db:seed:all --url "$DB_URL" --seeders-path "$SP" || true
+              break
+            fi
           done
         fi
-        export PORT="$${PORT:-4000}";
-        echo "[boot] iniciando servidor (PORT=$PORT)...";
-        node server.js 2>/dev/null || node app.js 2>/dev/null || node dist/server.js 2>/dev/null || node dist/app.js 2>/dev/null || node dist/index.js 2>/dev/null || npm start
+
+        export PORT="${PORT:-4000}"
+        echo "[boot] iniciando servidor (PORT=$PORT)..."
+        node server.js 2>/dev/null \
+        || node app.js 2>/dev/null \
+        || node dist/server.js 2>/dev/null \
+        || node dist/app.js 2>/dev/null \
+        || node dist/index.js 2>/dev/null \
+        || npm start
       '
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${PORT:-4000}/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
     restart: unless-stopped
-    # Fica só na rede default; quem recebe tráfego externo será o "edge".
-    networks: [ default ]
 
   web:
     image: node:18-alpine
@@ -96,16 +121,13 @@ services:
       REACT_APP_BACKEND_URL: /api
       TZ: ${TZ:-America/Sao_Paulo}
     depends_on:
-      api: { condition: service_started }
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 80 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 60
+      api:
+        condition: service_healthy
     command: >
       sh -lc '
         set -e;
         apk add --no-cache git nginx netcat-openbsd;
+
         rm -rf src && git clone --depth=1 --branch master https://github.com/gian0205/whaticketsaas.git src;
         cd src/frontend;
         rm -f package-lock.json yarn.lock pnpm-lock.yaml || true;
@@ -113,51 +135,64 @@ services:
         npm install --legacy-peer-deps material-ui-popup-state@^5 @emotion/react@^11 @emotion/styled@^11 || true;
         npm run build;
         BUILD_DIR=$([ -d dist ] && echo dist || echo build);
-        rm -rf /usr/share/nginx/html/*; cp -r "$BUILD_DIR"/* /usr/share/nginx/html/;
-        nginx -t; nginx -g "daemon off;";
-      '
-    restart: unless-stopped
-    networks: [ default ]
 
-  # Traefik interno (edge) — recebe do Traefik do Coolify e distribui para web/api
-  edge:
-    image: traefik:2.11
-    depends_on:
-      - web
-      - api
-    command:
-      - --entrypoints.web.address=:80
-      - --providers.file.filename=/etc/traefik/dynamic.yml
-      - --providers.file.watch=true
-      - --log.level=INFO
+        rm -rf /usr/share/nginx/html/*;
+        cp -r "$BUILD_DIR"/* /usr/share/nginx/html/;
+
+        for p in 4000 8080 3000; do
+          if nc -z api $p; then API_UP="http://api:$p"; break; fi
+        done
+        : ${API_UP:=http://api:4000}
+
+        cat >/etc/nginx/conf.d/default.conf <<'NGINX'
+        server {
+          listen 80;
+          server_name _;
+          root /usr/share/nginx/html;
+          index index.html;
+
+          location / {
+            try_files $uri /index.html;
+          }
+
+          location /api/ {
+            proxy_pass __API_UP__/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+          }
+
+          location /socket.io/ {
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_pass __API_UP__/socket.io/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+          }
+        }
+NGINX
+        sed -i "s|__API_UP__|$API_UP|g" /etc/nginx/conf.d/default.conf;
+
+        echo "[web] usando upstream da API: $API_UP";
+        nginx -t;
+        nginx -g "daemon off;";
+      '
+    expose:
+      - "80"
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 80 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 60
-    # monta o arquivo dinâmico com os backends (web/api)
-    configs:
-      - source: traefik_dynamic
-        target: /etc/traefik/dynamic.yml
+      retries: 30
     restart: unless-stopped
-    # ESTE serviço entra na rede externa do Coolify
-    networks:
-      - default
-      - coolify-proxy
 
 volumes:
   pg_data:
   redis_data:
   storage:
 
-# nome da rede externa do Coolify pode variar (coolify-overlay, coolify-infra, etc.)
-# defina a env COOLIFY_NETWORK no Coolify para o nome correto; fallback = coolify-overlay
-networks:
-  coolify-proxy:
-    external: true
-    name: ${COOLIFY_NETWORK:-coolify-overlay}
-
-configs:
-  traefik_dynamic:
-    file: ./traefik-dynamic.yml
 
