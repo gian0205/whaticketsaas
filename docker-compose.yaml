@@ -11,66 +11,127 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
+      # usa defaults se envs faltarem (evita "role '-d' does not exist")
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
+    environment:
+      TZ: ${TZ:-America/Sao_Paulo}
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
     restart: unless-stopped
 
   api:
     build:
       context: https://github.com/gian0205/whaticketsaas.git#master
       dockerfile: backend/Dockerfile
-    # Adicionamos nosso script de entrypoint para rodar as migrações
-    entrypoint: ["/bin/sh", "-c", "chmod +x /entrypoint-api.sh && /entrypoint-api.sh node server.js"]
-    volumes:
-      # Mapeamos o script para dentro do contêiner
-      - ./entrypoint-api.sh:/entrypoint-api.sh
-      - storage:/app/public
+      args:
+        GIT_REPO: https://github.com/gian0205/whaticketsaas.git
+        GIT_REF: master
     environment:
       TZ: ${TZ:-America/Sao_Paulo}
       NODE_ENV: production
       PORT: "4000"
+
+      # Domínio único (o WEB faz proxy /api)
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-whaticket.nepal.decorafit.com.br}
       BACKEND_URL: https://${PUBLIC_DOMAIN:-whaticket.nepal.decorafit.com.br}/api
       FRONTEND_URL: https://${PUBLIC_DOMAIN:-whaticket.nepal.decorafit.com.br}
+
+      # Banco (PostgreSQL)
+      DB_DIALECT: postgres
       DB_HOST: db
-      REDIS_HOST: redis
-      # ... (mantenha suas outras variáveis de ambiente DB_ e JWT_)
+      DB_PORT: "5432"
       DB_USER: ${DB_USER:-whaticket}
       DB_PASS: ${DB_PASS:-mude}
       DB_NAME: ${DB_NAME:-whaticket}
+
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+
+      # JWT (troque por segredos fortes)
       JWT_SECRET: ${JWT_SECRET:-troque}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-troque2}
+
+      # Seeds automáticas no 1º boot (depois altere para "false")
       RUN_SEEDS: ${RUN_SEEDS:-false}
     depends_on:
-      db: { condition: service_healthy }
-      redis: { condition: service_healthy }
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # ajuste o caminho se seu backend servir mídias em outro diretório
+      - storage:/app/public
+    command: >
+      sh -lc '
+        set -e;
+        echo "[boot] garantindo sequelize-cli...";
+        command -v sequelize >/dev/null 2>&1 || npm i -g sequelize-cli >/dev/null 2>&1 || true;
+
+        # garante driver do Postgres (caso não esteja na imagem final)
+        cd /app;
+        node -e "require(\"pg\");require(\"pg-hstore\")" >/dev/null 2>&1 || (echo "[boot] instalando pg/pg-hstore..."; npm i --omit=dev pg pg-hstore);
+
+        # monta URL do banco
+        DB_URL="postgres://$$DB_USER:$$DB_PASS@$$DB_HOST:$$DB_PORT/$$DB_NAME";
+
+        # migrations (prefere dist/, fallback src/)
+        MP="/app/dist/database/migrations"; [ -d "$$MP" ] || MP="/app/src/database/migrations";
+        if [ -d "$$MP" ]; then
+          echo "[boot] rodando migrations em $$MP...";
+          sequelize db:migrate --url "$$DB_URL" --migrations-path "$$MP" || true;
+        else
+          echo "[boot] nenhuma pasta de migrations encontrada (ok).";
+        fi
+
+        # seeds (opcional)
+        if [ "$$RUN_SEEDS" = "true" ]; then
+          SP="/app/dist/database/seeders"; [ -d "$$SP" ] || SP="/app/src/database/seeders";
+          if [ -d "$$SP" ]; then
+            echo "[boot] rodando seeds em $$SP...";
+            sequelize db:seed:all --url "$$DB_URL" --seeders-path "$$SP" || true;
+          else
+            echo "[boot] nenhuma pasta de seeders encontrada (ok).";
+          fi
+        fi
+
+        echo "[boot] iniciando servidor...";
+        node dist/server.js 2>/dev/null || node dist/app.js 2>/dev/null || npm start || node dist/index.js
+      '
     restart: unless-stopped
 
   web:
-    # A mágica acontece aqui: construímos uma imagem em vez de usar uma pronta
     build:
-      context: . # Usa o diretório atual como contexto
-      dockerfile: - # Define o Dockerfile diretamente aqui
+      context: https://github.com/gian0205/whaticketsaas.git#master
+      dockerfile: frontend/Dockerfile
       args:
-        # Passa o script como um argumento para o Dockerfile
-        ENTRYPOINT_SCRIPT: ${ENTRYPOINT_WEB_SCRIPT:-$(cat entrypoint-web.sh)}
-    image: whaticket-frontend-custom
-    stdin_open: true # Necessário para passar o script como argumento
-    ports:
-      - "80"
+        GIT_REPO: https://github.com/gian0205/whaticketsaas.git
+        GIT_REF: master
+        # garante que o front chame /api (mesmo domínio)
+        VITE_BACKEND_URL: /api
+        REACT_APP_BACKEND_URL: /api
+    environment:
+      TZ: ${TZ:-America/Sao_Paulo}
     depends_on:
-      - api
+      api:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
   pg_data:
   redis_data:
   storage:
+
