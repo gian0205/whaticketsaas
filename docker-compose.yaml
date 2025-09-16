@@ -74,4 +74,3 @@ volumes:
   pg_data:
   redis_data:
   storage:
-
