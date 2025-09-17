@@ -57,7 +57,7 @@ const App = () => {
             palette: {
                 type: mode,
                 primary: { main: mode === "light" ? "#FF6633" : "#FFFFFF" },
-                quicktags: { main: mode === "light" ? "#FF6633" : "#2DDD7F" },
+                quicktags: { main: mode === "light" ? "#FF6633" : "#FF6633" },
 				sair: { main: mode === "light" ? "#FF6633" : "#333" },
 				vcard: { main: mode === "light" ? "#FF6633" : "#666" },
                 textPrimary: mode === "light" ? "#FF6633" : "#FFFFFF",
